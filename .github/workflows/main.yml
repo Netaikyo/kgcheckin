@@ -16,6 +16,20 @@ jobs:
           node-version: 18
           cache: 'npm'
           cache-dependency-path: ./api/package-lock.json
+      - name: 🔧 安装GitHub CLI，并使用PAT登录
+        env:
+          PAT: ${{ secrets.PAT }}
+        run: |
+          if [ -n "${PAT}" ]; then
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update
+            sudo apt install gh -y
+            gh --version
+            echo "${{ secrets.PAT }}" | gh auth login --with-token
+            gh auth status
+          fi
       - name: Cache node_modules in api directory
         id: cache-npm
         uses: actions/cache@v3
@@ -31,3 +45,5 @@ jobs:
         run: npm run main
         env:
           USERINFO: ${{ secrets.USERINFO }}
+          PAT: ${{ secrets.PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
