@@ -59,8 +59,8 @@ jobs:
         run: npm run install
         if: ${{ steps.cache-npm.outputs.cache-hit != 'true' }}
 
-      # ── 步骤一：生成二维码（落盘字符画文件 + PNG + Summary + 密钥）──
-      - name: 生成登录二维码
+      # ═══ 步骤一：生成二维码图片并写入 Summary（真实 PNG 图片，可直接扫描）════
+      - name: 生成登录二维码图片
         id: gen
         run: node qrcodeLogin.js gen
         env:
@@ -68,38 +68,26 @@ jobs:
           USERINFO: ${{ secrets.USERINFO }}
           APPEND_USER: ${{ github.event.inputs.append_user }}
 
-      # ── 步骤二：在运行日志中直接输出可扫描的二维码字符画 ──
-      # 注意：不使用 ::group:: 折叠，确保二维码在日志中直接可见、便于手机扫描
-      - name: 在运行日志中输出二维码
-        id: showqr
-        if: ${{ success() && steps.gen.outcome == 'success' }}
-        run: |
-          echo "════════════════════════════════════════════════════════"
-          echo "   请使用「酷狗音乐 APP」扫描下方二维码完成登录"
-          echo "════════════════════════════════════════════════════════"
-          echo ""
-          if [ -f qr/qr-ascii.txt ]; then
-            cat qr/qr-ascii.txt
-          else
-            echo "::error::未找到二维码字符画文件，生成步骤可能未成功执行。"
-          fi
-          echo ""
-          echo "────────────────────────────────────────────────────────"
-          echo "如无法直接扫描，可复制以下链接到酷狗音乐 App 内扫码："
-          if [ -f qr/qr-urls.txt ]; then
-            cat qr/qr-urls.txt
-          fi
-          echo ""
-          echo "（二维码同时已写入本次运行的【Summary 摘要】页面，可点击查看清晰图片）"
+      # ═══ 步骤二：立即上传二维码图片（生成成功后立即可下载，不用等整个 run 结束）════
+      - name: 上传二维码图片（立即可下载）
+        if: ${{ success() && steps.gen.outcome == 'success' && hashFiles('qr/*.png') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: 二维码图片
+          path: qr/*.png
+          retention-days: 1
 
-      # ── 错误处理：生成步骤失败时给出明确提示 ──
+      # ═══ 错误处理：生成失败时给出明确提示 ═══
       - name: 二维码生成失败提示
         if: ${{ failure() && steps.gen.outcome == 'failure' }}
         run: |
-          echo "::error::二维码生成失败，无法继续登录。"
-          echo "请检查：1) 运行器网络能否访问酷狗接口；2) 依赖是否安装成功（查看上方「安装依赖」步骤）。"
+          echo "::error::❌ 二维码生成失败，无法继续登录。"
+          echo ""
+          echo "请检查以下可能的原因："
+          echo "  1️⃣ 运行器网络是否能正常访问酷狗接口"
+          echo "  2️⃣ npm 依赖是否安装成功（查看上方「安装依赖」步骤的输出）"
 
-      # ── 步骤三：轮询等待用户扫码确认 ──
+      # ═══ 步骤三：轮询等待用户扫码确认（用户在 Summary 页扫完图后自动检测）════
       - name: 等待扫码登录
         id: wait
         if: ${{ success() && steps.gen.outcome == 'success' }}
@@ -111,11 +99,11 @@ jobs:
           PAT: ${{ secrets.PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-      # ── 上传二维码图片作为备用（仅在存在时）──
-      - name: 上传二维码图片
+      # ═══ 最终兜底上传（确保即使前面步骤失败也能拿到已生成的文件）════
+      - name: 上传所有生成的文件（兜底）
         if: ${{ always() && hashFiles('qr/*') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: 二维码
+          name: 二维码全部文件
           path: qr/
           retention-days: 1

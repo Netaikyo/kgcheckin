@@ -12,19 +12,6 @@ const QRCode = require('./api/node_modules/qrcode')
 const SUMMARY_FILE = process.env.GITHUB_STEP_SUMMARY
 const QR_DIR = './qr'
 const KEYS_FILE = './qrkeys.json'
-const ASCII_FILE = `${QR_DIR}/qr-ascii.txt`   // 供「日志输出步骤」直接 cat 到运行日志
-const URLS_FILE = `${QR_DIR}/qr-urls.txt`     // 扫码失败的链接兜底
-
-/**
- * 渲染 QR 为 UTF-8 半块字符画（每个字符纵向承载 2 个模块），
- * 正好补偿终端字符“高>宽”的比例，在 GitHub Actions 运行日志里可直接用手机扫描。
- * 相比双宽 '██' 方案（横纵比 2:1 被拉伸、常扫不上），半块更接近正方形、可扫性更好。
- * @param {string} url
- * @returns {Promise<string>}
- */
-function renderQrUtf8(url) {
-  return QRCode.toString(url, { type: 'utf8', margin: 2 })
-}
 
 /**
  * 向 GitHub Step Summary 追加内容（本地或非 Actions 环境自动跳过）
@@ -40,75 +27,62 @@ function appendSummary(markdown) {
 }
 
 /**
- * 生成并落盘单个二维码：
- * - qr/qr-ascii.txt : UTF-8 半块字符画（日志输出步骤 cat 它即可在运行日志扫码）
- * - qr/qr-urls.txt  : 扫码失败的链接兜底
- * - qr/qr-N.png     : PNG 文件，供 artifact 下载
- * - Summary         : 以真实 PNG 图片（data URI）嵌入运行摘要，扫码页可直接查看
- * @param {string} url
+ * 生成并展示单个二维码（图片优先方案）
+ *
+ * 展示层级（按可扫性从高到低）：
+ *   1. Summary 摘要页：真实 PNG 图片（<img> data URI），手机直接扫
+ *   2. Artifact 下载：qr/qr-N.png 高清文件
+ *   3. 日志链接兜底：酷狗扫码 URL，复制到 App 内打开
+ *
+ * @param {string} url 酷狗扫码登录完整 URL
  * @param {number} index 从 1 开始
- * @param {number} total
+ * @param {number} total 总账号数
  */
 async function buildQr(url, index, total) {
-  const utf8 = await renderQrUtf8(url)
   const header = total > 1 ? `（第 ${index}/${total} 个账号）` : ''
 
   fs.mkdirSync(QR_DIR, { recursive: true })
 
-  // ═══ 核心输出：直接将二维码打印到运行日志（用户展开此步骤即可看到并扫描）═══
-  printMagenta(`\n╔══════════════════════════════════════════╗`)
-  printMagenta(`║  请使用「酷狗音乐 APP」扫描下方二维码登录 ${header}  `)
-  printMagenta(`╚══════════════════════════════════════════╝\n`)
-  console.log(utf8)
-  printMagenta('───────────────────────────────────────')
-  printMagenta('如无法扫描，请复制此链接到酷狗 App 打开：')
-  console.log(url)
-  console.log('')
-
-  // 落盘文件（供后续 cat 步骤 / artifact 双保险）
-  const block = (total > 1 ? `# 账号 ${index}/${total}\n` : '') + utf8 + '\n'
-  fs.appendFileSync(ASCII_FILE, block)
-  fs.appendFileSync(URLS_FILE, (total > 1 ? `账号 ${index}/${total}: ` : '') + url + '\n')
-
-  // 生成 PNG 文件（artifact 下载 + Summary 内嵌图片）
+  // ── 1) 生成 PNG 文件（artifact 下载用）──
   await QRCode.toFile(`${QR_DIR}/qr-${index}.png`, url, { width: 320, margin: 2 })
 
-  // 在运行摘要（Summary）中嵌入真实可扫的二维码图片
+  // ── 2) 在运行摘要（Summary）中嵌入真实可扫的二维码图片 ← 核心展示渠道 ──
   const dataUrl = await QRCode.toDataURL(url, { width: 320, margin: 2 })
   appendSummary([
     `## 🎵 酷狗音乐扫码登录${header}`,
     '',
-    '请使用 **酷狗音乐 APP** 扫描下方二维码登录（图片可在运行摘要页直接查看）：',
+    '### 请使用 **酷狗音乐 APP** 扫描下方二维码 👇',
     '',
-    `<img src="${dataUrl}" alt="酷狗扫码登录二维码${header}" width="320" />`,
+    `<p><img src="${dataUrl}" alt="酷狗扫码登录二维码${header}" width="320" style="border:2px solid #e1e4e8;border-radius:8px;padding:8px;background:#fff;" /></p>`,
     '',
-    '如图片无法加载，可复制以下链接到浏览器/酷狗 App 打开：',
+    '> ⏳ 二维码有效期约 **2 分钟**，请尽快扫描。扫描后工作流会自动检测登录状态。',
     '',
-    url,
+    '**如上方图片未加载或无法扫描**，可复制以下链接到酷狗音乐 App 内打开：',
     '',
-    '<details><summary>字符版二维码（备用）</summary>',
-    '',
-    '```',
-    utf8,
-    '```',
-    '',
-    '</details>',
+    `<code>${url}</code>`,
     '',
     '---',
     '',
   ].join('\n'))
+
+  // ── 3) 日志输出：清晰指引用户去 Summary 页看图 ──
+  printMagenta(`\n═══ 第 ${index}/${total} 个登录二维码已生成 ═══`)
+  printMagenta(`👉 请点击本页面上方的「**Summary**」标签查看可扫描的二维码图片`)
+  printMagenta(`   或在页面左侧导航栏找到「Run details → Summary」`)
+  printMagenta(`\n📋 扫码备用链接（复制到酷狗 App 打开）：`)
+  console.log(`   ${url}`)
+  console.log('')
 }
 
 /** 解析账号数量 */
 function resolveNumber() {
-  const args = process.argv.slice(3) // 跳过 node、脚本名、模式参数
+  const args = process.argv.slice(3)
   return parseInt(process.env.NUMBER || args[0] || "1")
 }
 
 /**
- * 模式一：生成二维码并落盘（字符画文件 + PNG + Summary），随后立即结束 step。
- * 拆成独立 step 的目的：GitHub 会在 step 结束后刷新 Summary 页，
- * 同时由后续的「在运行日志中输出二维码」步骤把字符画 cat 进运行日志，用户在等待扫码期间可直接扫码。
+ * 模式一：生成二维码（PNG 图片写入 Summary），随后立即结束 step。
+ * step 结束后 Summary 页会刷新显示真实二维码图片，用户可直接扫描。
  */
 async function genMode() {
   const api = startService()
@@ -119,11 +93,6 @@ async function genMode() {
   const number = resolveNumber()
   const keys = []
   try {
-    // 预先清空上一次残留的字符画/链接文件
-    for (const f of [ASCII_FILE, URLS_FILE]) {
-      if (fs.existsSync(f)) fs.unlinkSync(f)
-    }
-
     for (let n = 0; n < number; n++) {
       const result = await send(`/login/qr/key?timestrap=${Date.now()}`, "GET", {})
       if (result.status === 1) {
@@ -138,8 +107,8 @@ async function genMode() {
       }
     }
     fs.writeFileSync(KEYS_FILE, JSON.stringify({ number, keys }))
-    printMagenta(`\n已生成 ${number} 个二维码（已直接显示在上方日志中）。`)
-    printMagenta(`如上方二维码无法扫描，请前往【Summary 摘要】页查看清晰图片，或复制链接到酷狗 App 打开。`)
+    printMagenta(`\n✅ 已生成 ${number} 个二维码图片。`)
+    printMagenta(`📱 现在请前往【Summary】页面扫描二维码，工作流会在此步骤结束后自动进入等待阶段。`)
   } catch (e) {
     const msg = e && e.message ? e.message : String(e)
     console.error(`::error::二维码生成失败：${msg}`)
@@ -159,7 +128,7 @@ async function waitMode() {
   try {
     parsed = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'))
   } catch {
-    throw new Error("未找到二维码密钥文件，请确认已先运行“生成并展示二维码”步骤")
+    throw new Error('未找到二维码密钥文件，请确认已先运行「生成登录二维码」步骤')
   }
   const { number, keys } = parsed
   const USERINFO = process.env.USERINFO
