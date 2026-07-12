@@ -165,6 +165,9 @@ async function getModulesDefinitions(modulesPath, specificRoute, doRequire = tru
 async function consturctServer(moduleDefs) {
   const app = express();
   const { CORS_ALLOW_ORIGIN } = process.env;
+  // 默认仅允许本机来源，避免反射任意 Origin 带来的 CSRF/凭据泄露风险；
+  // 仅当显式配置 CORS_ALLOW_ORIGIN 时才放宽，并仅在配置时允许凭据。
+  const allowOrigin = CORS_ALLOW_ORIGIN || 'http://127.0.0.1:3000';
   app.set('trust proxy', true);
 
   /**
@@ -173,8 +176,8 @@ async function consturctServer(moduleDefs) {
   app.use((req, res, next) => {
     if (req.path !== '/' && !req.path.includes('.')) {
       res.set({
-        'Access-Control-Allow-Credentials': true,
-        'Access-Control-Allow-Origin': CORS_ALLOW_ORIGIN || req.headers.origin || '*',
+        'Access-Control-Allow-Credentials': !!CORS_ALLOW_ORIGIN,
+        'Access-Control-Allow-Origin': allowOrigin,
         'Access-Control-Allow-Headers': 'Authorization,X-Requested-With,Content-Type,Cache-Control',
         'Access-Control-Allow-Methods': 'PUT,POST,GET,DELETE,OPTIONS',
         'Content-Type': 'application/json; charset=utf-8',

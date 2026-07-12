@@ -190,6 +190,15 @@ function sendMailSMTP(title, content, cfg) {
     let socket
     let tlsSocket
     let timer
+    let completed = false
+    let settled = false
+    function finish(success, err) {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      if (success) resolve(true)
+      else reject(err || new Error('SMTP 会话异常终止'))
+    }
 
     // AUTH 流程命令序列（EHLO 之后依次执行）
     const authCommands = [
@@ -213,7 +222,7 @@ function sendMailSMTP(title, content, cfg) {
 
       if (code >= 400) {
         socket.destroy()
-        reject(new Error(`SMTP 错误: ${line}`))
+        finish(false, new Error(`SMTP 错误: ${line}`))
         return
       }
 
@@ -244,15 +253,15 @@ function sendMailSMTP(title, content, cfg) {
           // 收到 220 → 升级为 TLS
           if (code !== 220) {
             socket.destroy()
-            reject(new Error(`STARTTLS 失败: ${line}`))
+            finish(false, new Error(`STARTTLS 失败: ${line}`))
             return
           }
           tlsSocket = tls.connect({ socket, host, rejectUnauthorized: true })
           tlsSocket.setEncoding('utf8')
           tlsSocket.on('data', (chunk) => { handleChunk(chunk) })
-          tlsSocket.on('end', () => { clearTimeout(timer); resolve(true) })
-          tlsSocket.on('close', () => { clearTimeout(timer); resolve(true) })
-          tlsSocket.on('error', (err) => { clearTimeout(timer); reject(err) })
+          tlsSocket.on('end', () => finish(completed))
+          tlsSocket.on('close', () => finish(completed))
+          tlsSocket.on('error', (err) => finish(false, err))
           socket = tlsSocket
           // 升级后重新发送 EHLO
           sendCmd('EHLO kgcheckin')
@@ -268,7 +277,12 @@ function sendMailSMTP(title, content, cfg) {
 
         case 'AUTH':
           if (authStep < authCommands.length) {
+            const cmd = authCommands[authStep]
+            // 邮件内容已被服务器接受（DATA 后的终止响应）→ 视为发送成功
+            if (cmd === 'QUIT') completed = true
             sendCmd(authCommands[authStep++])
+          } else if (code === 221) {
+            completed = true
           }
           break
       }
@@ -288,7 +302,7 @@ function sendMailSMTP(title, content, cfg) {
     // 超时保护
     timer = setTimeout(() => {
       if (socket) socket.destroy()
-      reject(new Error('SMTP 超时'))
+      finish(false, new Error('SMTP 超时'))
     }, 15000)
 
     if (useSTARTTLS) {
@@ -304,9 +318,9 @@ function sendMailSMTP(title, content, cfg) {
 
     socket.setEncoding('utf8')
     socket.on('data', (chunk) => handleChunk(chunk))
-    socket.on('end', () => { clearTimeout(timer); resolve(true) })
-    socket.on('close', () => { clearTimeout(timer); resolve(true) })
-    socket.on('error', (err) => { clearTimeout(timer); reject(err) })
+    socket.on('end', () => finish(completed))
+    socket.on('close', () => finish(completed))
+    socket.on('error', (err) => finish(false, err))
   })
 }
 

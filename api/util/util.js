@@ -39,7 +39,7 @@ const cookieToJson = (cookie) => {
   let obj = {};
   cookieArr.forEach((i) => {
     let arr = i.split('=');
-    obj[arr[0]] = i.slice(arr[0].length + 1);
+    obj[arr[0].trim()] = i.slice(arr[0].length + 1);
   });
   return obj;
 };
